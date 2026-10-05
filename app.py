@@ -59,7 +59,7 @@ async def on_startup():
                     return await status_msg.edit_text(f"Error starting download: {e}")
                 
                 if not start_data.get("success") or not start_data.get("progress_url"):
-                    return await status_msg.edit_text(f"Could not initialize download. Response:\n{start_data}")
+                    return await status_msg.edit_text(f"Could not initialize download. Response:{start_data}")
                     
                 progress_url = start_data["progress_url"]
                 
@@ -81,7 +81,7 @@ async def on_startup():
                         
                         if time.time() - last_update >= 2.0:
                             prog_bar = generate_progress_bar(prog_value)
-                            text = f"🔄 **Processing on server...**\n\n{prog_bar}\n{prog_data.get('text', '')}"
+                            text = f"🔄 **Processing on server...**{prog_bar}{prog_data.get('text', '')}"
                             try:
                                 await status_msg.edit_text(text)
                             except Exception:
@@ -122,16 +122,29 @@ async def on_startup():
                                         if total_size > 0:
                                             percentage = (downloaded_size / total_size) * 100
                                             prog_bar = generate_progress_bar(percentage)
-                                            text = f"📥 **Downloading {quality}p to bot server...**\n\n{prog_bar}\n{format_bytes(downloaded_size)} / {format_bytes(total_size)}"
+                                            text = f"📥 **Downloading {quality}p to bot server...**{prog_bar}{format_bytes(downloaded_size)} / {format_bytes(total_size)}"
                                         else:
-                                            text = f"📥 **Downloading {quality}p to bot server...**\n\nDownloaded: {format_bytes(downloaded_size)}"
+                                            text = f"📥 **Downloading {quality}p to bot server...**Downloaded: {format_bytes(downloaded_size)}"
                                         try:
                                             await status_msg.edit_text(text)
                                         except Exception:
                                             pass
                                         last_update_time = now
                 except Exception as e:
-                    return await status_msg.edit_text(f"Error downloading video: {e}")\n\n                # Step 3.5: Download Thumbnail
+                    return await status_msg.edit_text(f"Error downloading video: {e}")
+
+                # Fix video metadata using FFmpeg so it can be forwarded/seeked
+                await status_msg.edit_text(f"🔧 Fixing video metadata for {quality}p...")
+                fixed_path = f"{uuid.uuid4()}_fixed.mp4"
+                try:
+                    import subprocess
+                    subprocess.run(["ffmpeg", "-y", "-i", local_path, "-c", "copy", "-movflags", "+faststart", fixed_path], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    import os
+                    os.remove(local_path)
+                    local_path = fixed_path
+                except Exception as e:
+                    print("FFmpeg fix failed:", e)
+                    # Continue with original if it fails
                 await status_msg.edit_text("Fetching video thumbnail...")
                 thumb_path = f"{uuid.uuid4()}_thumb.jpg"
                 video_title = filename
@@ -160,14 +173,14 @@ async def on_startup():
                     if now - last_upload_time[0] >= 2.0:
                         percentage = (current / total) * 100 if total > 0 else 0
                         prog_bar = generate_progress_bar(percentage)
-                        text = f"📤 **Uploading {quality}p to Telegram...**\n\n{video_title}\n{prog_bar}\n{format_bytes(current)} / {format_bytes(total)}"
+                        text = f"📤 **Uploading {quality}p to Telegram...**{video_title}{prog_bar}{format_bytes(current)} / {format_bytes(total)}"
                         try:
                             await status_msg.edit_text(text)
                         except Exception:
                             pass
                         last_upload_time[0] = now
 
-                await status_msg.edit_text(f"📤 **Uploading {quality}p to Telegram...**\n\nStarting upload...")
+                await status_msg.edit_text(f"📤 **Uploading {quality}p to Telegram...**Starting upload...")
                 try:
                     kwargs = {
                         "chat_id": chat_id,
@@ -191,7 +204,7 @@ async def on_startup():
 
         @bot.on_message(filters.command("start"))
         async def start_cmd(client, message):
-            await message.reply_text("Send me a YouTube link and I'll download it for you!\n\nYou can also specify quality directly: `https://youtu.be/... -q 720p`")
+            await message.reply_text("Send me a YouTube link and I'll download it for you!You can also specify quality directly: `https://youtu.be/... -q 720p`")
 
         @bot.on_message(filters.text & filters.regex(r"(youtube\.com|youtu\.be)"))
         async def process_video(client, message: Message):
