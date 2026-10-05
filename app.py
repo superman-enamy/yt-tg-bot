@@ -23,7 +23,26 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 app = FastAPI()
 bot = None
 
-def extract_video_id(url: str):
+
+def get_video_metadata(filepath):
+    try:
+        import subprocess, json
+        cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", filepath]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        data = json.loads(result.stdout)
+        
+        duration = int(float(data['format']['duration']))
+        width = 0
+        height = 0
+        for stream in data.get('streams', []):
+            if stream['codec_type'] == 'video':
+                width = int(stream['width'])
+                height = int(stream['height'])
+                break
+        return duration, width, height
+    except Exception:
+        return 0, 0, 0
+\ndef extract_video_id(url: str):
     match = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11}).*", url)
     return match.group(1) if match else None
 
@@ -182,6 +201,7 @@ async def on_startup():
 
                 await status_msg.edit_text(f"📤 **Uploading {quality}p to Telegram...**Starting upload...")
                 try:
+                    duration, width, height = get_video_metadata(local_path)
                     kwargs = {
                         "chat_id": chat_id,
                         "video": local_path,
@@ -189,6 +209,13 @@ async def on_startup():
                         "supports_streaming": True,
                         "progress": progress
                     }
+                    if duration > 0:
+                        kwargs["duration"] = duration
+                    if width > 0:
+                        kwargs["width"] = width
+                    if height > 0:
+                        kwargs["height"] = height
+                        
                     if os.path.exists(thumb_path):
                         kwargs["thumb"] = thumb_path
                         
