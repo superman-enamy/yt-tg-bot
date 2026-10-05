@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+pyrogram
+tgcrypto
+httpx
+python-dotenv
