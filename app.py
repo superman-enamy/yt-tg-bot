@@ -48,76 +48,65 @@ async def on_startup():
         bot = Client("my_bot", api_id=int(API_ID), api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
         
         async def execute_download(client, chat_id, url, video_id, quality, status_msg):
-            headers = {
-                'accept': '*/*',
-                'accept-language': 'en-US,en;q=0.9',
-                'cache-control': 'no-cache',
-                'dnt': '1',
-                'origin': 'https://frame.y2meta-uk.com',
-                'pragma': 'no-cache',
-                'priority': 'u=1, i',
-                'referer': 'https://frame.y2meta-uk.com/',
-                'sec-ch-ua': '"Chromium";v="152", "Not?A_Brand";v="24", "Google Chrome";v="152"',
-                'sec-ch-ua-mobile': '?1',
-                'sec-ch-ua-platform': '"Android"',
-                'sec-fetch-dest': 'empty',
-                'sec-fetch-mode': 'cors',
-                'sec-fetch-site': 'cross-site',
-                'user-agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Mobile Safari/537.36'
-            }
-
+            savenow_api_key = "dfcb6d76f2f6a9894gjkege8a4ab232222"
+            start_url = f"https://p.savenow.to/ajax/download.php?copyright=0&allow_extended_duration=1&format={quality}&url={url}&api={savenow_api_key}"
+            
             async with httpx.AsyncClient(timeout=60.0) as http:
-                # Step 1: Get Key
                 try:
-                    key_headers = headers.copy()
-                    key_headers['content-type'] = 'application/json'
-                    key_resp = await http.get(f"https://cnv.cx/v2/sanity/key?id={video_id}", headers=key_headers)
-                    key_data = key_resp.json()
-                    auth_key = key_data.get("key")
+                    start_resp = await http.get(start_url)
+                    start_data = start_resp.json()
                 except Exception as e:
-                    return await status_msg.edit_text(f"Error fetching key: {e}")
-                    
-                if not auth_key:
-                    return await status_msg.edit_text("Could not get auth key.")
-
-                # Step 2: Converter
-                await status_msg.edit_text("Generating download link...")
-                conv_headers = headers.copy()
-                conv_headers['content-type'] = 'application/x-www-form-urlencoded'
-                conv_headers['key'] = auth_key
+                    return await status_msg.edit_text(f"Error starting download: {e}")
                 
-                payload = {
-                    "link": f"https://youtu.be/{video_id}",
-                    "format": "mp4",
-                    "audioBitrate": "128",
-                    "videoQuality": quality,
-                    "filenameStyle": "pretty",
-                    "vCodec": "h264"
-                }
-                
-                try:
-                    conv_resp = await http.post("https://cnv.cx/v2/converter", headers=conv_headers, data=payload)
-                    conv_data = conv_resp.json()
-                    dl_url = conv_data.get("url")
-                    filename = conv_data.get("filename", f"{video_id}.mp4")
-                except Exception as e:
-                    return await status_msg.edit_text(f"Error converting: {e}")
+                if not start_data.get("success") or not start_data.get("progress_url"):
+                    return await status_msg.edit_text(f"Could not initialize download. Response:\n{start_data}")
                     
+                progress_url = start_data["progress_url"]
+                
+                await status_msg.edit_text("Processing video on server... (0%)")
+                dl_url = None
+                
+                # Sanitize filename
+                raw_title = start_data.get("info", {}).get("title", "video")
+                clean_title = "".join(c for c in raw_title if c.isalnum() or c in " ._-").strip()
+                filename = f"{clean_title}.mp4"
+                video_title = filename
+                
+                last_update = time.time()
+                while True:
+                    try:
+                        prog_resp = await http.get(progress_url)
+                        prog_data = prog_resp.json()
+                        prog_value = int(prog_data.get("progress", 0)) / 10.0
+                        
+                        if time.time() - last_update >= 2.0:
+                            prog_bar = generate_progress_bar(prog_value)
+                            text = f"🔄 **Processing on server...**\n\n{prog_bar}\n{prog_data.get('text', '')}"
+                            try:
+                                await status_msg.edit_text(text)
+                            except Exception:
+                                pass
+                            last_update = time.time()
+                        
+                        if str(prog_data.get("success")) == "1" or prog_value >= 100:
+                            dl_url = prog_data.get("download_url")
+                            break
+                        
+                        import asyncio
+                        await asyncio.sleep(2)
+                    except Exception as e:
+                        return await status_msg.edit_text(f"Error polling progress: {e}")
+                
                 if not dl_url:
-                    return await status_msg.edit_text(f"Could not get download link. Response:\n{conv_data}")
-                    
-                # Step 3: Download
-                await status_msg.edit_text(f"Downloading video to server... ({filename})")
-                local_path = f"{uuid.uuid4()}_{filename}"
-                
-                dl_headers = {
-                    "Referer": "https://v38.www-y2mate.com/",
-                    "User-Agent": headers['user-agent']
-                }
+                     return await status_msg.edit_text("Download link not found after processing.")
+
+                await status_msg.edit_text(f"📥 Downloading to bot server... ({filename})")
+                import uuid
+                local_path = f"{uuid.uuid4()}_video.mp4"
                 
                 try:
                     async with httpx.AsyncClient(timeout=None) as dl_http:
-                        async with dl_http.stream('GET', dl_url, headers=dl_headers) as resp:
+                        async with dl_http.stream('GET', dl_url) as resp:
                             resp.raise_for_status()
                             total_size = int(resp.headers.get('content-length', 0))
                             downloaded_size = 0
@@ -133,18 +122,16 @@ async def on_startup():
                                         if total_size > 0:
                                             percentage = (downloaded_size / total_size) * 100
                                             prog_bar = generate_progress_bar(percentage)
-                                            text = f"📥 **Downloading {quality}p to server...**\n\n{filename}\n{prog_bar}\n{format_bytes(downloaded_size)} / {format_bytes(total_size)}"
+                                            text = f"📥 **Downloading {quality}p to bot server...**\n\n{prog_bar}\n{format_bytes(downloaded_size)} / {format_bytes(total_size)}"
                                         else:
-                                            text = f"📥 **Downloading {quality}p to server...**\n\n{filename}\nDownloaded: {format_bytes(downloaded_size)}"
+                                            text = f"📥 **Downloading {quality}p to bot server...**\n\nDownloaded: {format_bytes(downloaded_size)}"
                                         try:
                                             await status_msg.edit_text(text)
                                         except Exception:
                                             pass
                                         last_update_time = now
                 except Exception as e:
-                    return await status_msg.edit_text(f"Error downloading video: {e}")
-                    
-                # Step 3.5: Download Thumbnail
+                    return await status_msg.edit_text(f"Error downloading video: {e}")\n\n                # Step 3.5: Download Thumbnail
                 await status_msg.edit_text("Fetching video thumbnail...")
                 thumb_path = f"{uuid.uuid4()}_thumb.jpg"
                 video_title = filename
