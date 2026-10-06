@@ -42,7 +42,8 @@ def get_video_metadata(filepath):
         return duration, width, height
     except Exception:
         return 0, 0, 0
-\ndef extract_video_id(url: str):
+
+def extract_video_id(url: str):
     match = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11}).*", url)
     return match.group(1) if match else None
 
